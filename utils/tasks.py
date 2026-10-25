@@ -40,6 +40,8 @@ AVAILABLE_TASKS = {
     "notify": "测试消息推送",
     "redemption": "兑换码",
     "screen_test": "界面可切换性测试",
+    # TODO [MULTI_ACCOUNT] 多账号轮询
+    "multi_account": "多账号轮询",
 }
 
 # 任务名称映射（兼容旧名称调用方）
@@ -67,6 +69,8 @@ PAUSABLE_TASKS = frozenset({
     "apocalyptic",
     "redemption",
     "screen_test",
+    # TODO [MULTI_ACCOUNT]
+    "multi_account",
 })
 
 

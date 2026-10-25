@@ -38,6 +38,23 @@ import subprocess as sp
 import ctypes
 import time
 
+
+def _split_task_command(command: str) -> list[str]:
+    """[MULTI_ACCOUNT] 把内置任务字符串拆成参数列表（支持带空格的命令）。
+
+    例：``multi_account --account 3f2c...`` → ``["multi_account", "--account", "3f2c..."]``。
+    使用 posix=False 保留 Windows 路径里的反斜杠，只去掉成对引号。
+    """
+    text = str(command).strip()
+    if not text:
+        return []
+    try:
+        tokens = shlex.split(text, posix=False)
+    except ValueError:
+        return text.split()
+    return [t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'" else t for t in tokens]
+
+
 if sys.platform == 'win32':
     import keyboard
     import ctypes.wintypes as wintypes
@@ -1335,12 +1352,15 @@ class LogInterface(ScrollArea):
     def _startTask(self, task, timeout=0):
         self.current_task = task
         command = str(task)
+        # TODO [MULTI_ACCOUNT] 支持带参数的内置任务（如 multi_account --account xxx）
+        command_parts = _split_task_command(command) or [command]
+        base_task = command_parts[0]
         # 内置任务按白名单启用暂停（workflow 与外部任务的判定见 _resolvePauseSupport）
-        self._pause_supported = self._resolvePauseSupport(command)
+        self._pause_supported = self._resolvePauseSupport(base_task)
         self._pause_state = STATE_RUNNING
         self._status_text_before_pause = None
         self._paused_timeout_remaining = None
-        task_msgid = TASK_NAMES.get(command, command)
+        task_msgid = TASK_NAMES.get(base_task, command)
         self.clearLog()
         # 日志按约定记中文原文（msgid）；状态标签是界面文案，显示当前语言
         self.appendLog("========== 开始任务: {} ==========".format(task_msgid) + "\n")
@@ -1402,7 +1422,7 @@ class LogInterface(ScrollArea):
                 self.process.setWorkingDirectory(cwd)
             except Exception:
                 pass
-            arguments = [command]
+            arguments = command_parts
             self.appendLog(f"命令: {executable_path} {command}\n")
         else:
             executable_path = sys.executable
@@ -1415,7 +1435,7 @@ class LogInterface(ScrollArea):
                 self.process.setWorkingDirectory(cwd)
             except Exception:
                 pass
-            arguments = [main_script, command]
+            arguments = [main_script, *command_parts]
             self.appendLog(f"命令: {executable_path} {main_script} {command}\n")
 
         self._armTaskTimeout(proc, timeout)
@@ -1637,7 +1657,8 @@ class LogInterface(ScrollArea):
                 args_tokens = args_text.split()
             # legacy fallback：兼容手写 --workflow-name 的自定义任务/历史启动形态
             return '--workflow-name' in args_tokens
-        return str(command_or_task) in PAUSABLE_TASKS
+        parts = _split_task_command(str(command_or_task))
+        return bool(parts) and parts[0] in PAUSABLE_TASKS
 
     def _pauseControlPath(self):
         """暂停指令文件路径（CLI 通过环境变量 MARCH7TH_CONTROL_FILE 读取同一路径）。"""

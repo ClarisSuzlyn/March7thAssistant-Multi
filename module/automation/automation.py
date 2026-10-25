@@ -209,6 +209,12 @@ class Automation(metaclass=SingletonMeta):
                 raise RuntimeError("截图超时")
             time.sleep(min(1, remaining))
 
+    def release_screenshot(self):
+        """[MULTI_ACCOUNT] 释放最近一帧截图与 OCR 缓存，避免长时间运行占用内存。"""
+        self.screenshot = None
+        self.screenshot_pos = None
+        self.ocr_result = None
+
     def calculate_positions(self, template, max_loc, relative):
         """
         计算匹配位置。

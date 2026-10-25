@@ -217,3 +217,9 @@ CLAUDE.md
 
 # Telemetry server
 telemetry_server/
+
+# [MULTI_ACCOUNT] 多账号敏感配置（严禁上传）
+/settings/multi_account/
+settings/multi_account/accounts.json
+settings/multi_account/profiles/*.yaml
+*.acc

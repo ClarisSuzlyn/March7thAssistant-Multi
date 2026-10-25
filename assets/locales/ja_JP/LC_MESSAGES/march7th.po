@@ -6323,3 +6323,271 @@ msgstr ""
 #: module/update/version_check.py:331
 msgid "更新接口未返回有效版本信息，请稍后重试"
 msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:50
+msgid "B服"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:536
+msgid "不保存"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:159
+msgid "仅保存配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:188
+msgid "仅用于界面区分，可随时修改"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:249
+msgid "任务结束"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:257
+msgid "任务结束后"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:230
+msgid "使用 Windows DPAPI 加密保存在本机"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:149
+msgid "保存配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:204
+msgid "全局"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:237
+msgid "切号时自动填写账号密码"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:515
+msgid "切换失败"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:501
+msgid "删除失败"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:141
+msgid "删除当前账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:465
+msgid "删除账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:429
+msgid "副本"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:243
+msgid "即使当前已是同一账号也重新登录一次"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:157
+msgid "启动当前账号配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:152
+msgid "启动当前配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:158
+msgid "启动所有账号配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:422
+msgid "复制失败"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:137
+msgid "复制当前账号配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:430
+msgid "复制账号"
+msgstr ""
+
+#: app/setting_interface.py:2955
+msgid "多账号"
+msgstr ""
+
+#: utils/tasks.py:15
+msgid "多账号轮询"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:50
+msgid "官服"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:196
+msgid "官服 / B服（暂未开放）"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:589
+msgid "已写入账号「{name}」"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:498
+msgid "已删除账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:448
+msgid "已复制「{name}」的账号配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:448
+msgid "已复制账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:407
+msgid "已新增账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:602
+msgid "应用配置失败"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:217
+msgid "开启开关后跟随「程序设置」中的全局路径"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:422
+msgid "当前没有可复制的账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:534
+msgid "当前账号有未保存的修改，是否先保存？"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:243
+msgid "总是重新登录"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:221
+msgid "手机号或邮箱"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:397
+msgid "新增失败"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:133
+msgid "新增账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:59
+msgid "无动作"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:595
+msgid "无法启动"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:72
+msgid "显示/隐藏密码"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:145
+msgid "暂无账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:534
+msgid "未保存的修改"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:196
+msgid "渠道服"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:224
+msgid "游戏登录用的手机号或邮箱"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:441
+msgid "源账号不存在"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:205
+msgid "独立"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:56
+msgid "登出当前账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:70
+msgid "登录密码"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:224
+msgid "登录账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:466
+msgid "确定删除账号「{name}」吗？其配置会被一并删除。"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:258
+msgid "该账号跑完后的收尾动作（多账号轮询时中间账号只切号，不会关机）"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:595
+msgid "请先在「多账号」页添加账号"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:407
+msgid "请填写登录账号与密码后点击「保存配置」"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:430
+msgid "请输入新账号名称"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:388
+msgid "请输入账号名称"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:185
+msgid "账号名称"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:397
+msgid "账号名称「{name}」已存在，请使用其他名称"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:182
+msgid "账号配置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:110
+msgid "账号配置保存在 settings/multi_account/；切换账号会用该账号的配置覆盖当前配置，点击「保存配置」才会写回当前账号。"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:55
+msgid "跟随程序设置"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:57
+msgid "退出游戏（关闭客户端）"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:542
+msgid "选择游戏客户端"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:208
+msgid "选择独立游戏路径"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:589
+msgid "配置已保存"
+msgstr ""
+
+#: app/sub_interfaces/multi_account_interface.py:155
+msgid "保存当前账号配置"
+msgstr ""

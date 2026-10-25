@@ -70,6 +70,11 @@ def parse_args():
         metavar='PATH',
         help='仅执行指定步骤路径，例如 0/1/2'
     )
+    optional.add_argument(
+        '--account',
+        metavar='ID',
+        help='[多账号] 仅执行指定账号 ID（配合 multi_account 任务使用）'
+    )
 
     args = parser.parse_args()
 
@@ -332,7 +337,7 @@ def run_workflow_action(workflow_name: str, workflow_step_path=None):
     return runner.run(workflow)
 
 
-def main(action=None, no_run_immediately=False, workflow_name=None, workflow_step_path=None):
+def main(action=None, no_run_immediately=False, workflow_name=None, workflow_step_path=None, account=None):
     first_run()
     # 启动暂停控制器（仅在 GUI 注入了 MARCH7TH_CONTROL_FILE 时生效，其余场景惰性关闭）
     pause_ctl.start()
@@ -344,6 +349,13 @@ def main(action=None, no_run_immediately=False, workflow_name=None, workflow_ste
     # 完整运行
     if action is None or action == "main":
         run_main_actions(no_run_immediately)
+
+    # TODO [MULTI_ACCOUNT] 多账号轮询（--account 指定账号时只跑该账号）
+    elif action == "multi_account":
+        from core.scheduler import run_multi_account
+
+        account_ids = [account] if account else None
+        sys.exit(run_multi_account(account_ids))
 
     # 子任务
     elif action in ["routine", "daily", "power", "currencywars", "currencywarsloop", "currencywarstemp", "divergent", "divergentloop", "divergenttemp", "fight", "universe", "forgottenhall", "purefiction", "apocalyptic", "redemption", "screen_test"]:
@@ -401,7 +413,11 @@ if __name__ == "__main__":
                 workflow_step_path=args.workflow_step_path,
             )
         elif args.task:
-            result = main(action=args.task, no_run_immediately=args.no_run_immediately)
+            result = main(
+                action=args.task,
+                no_run_immediately=args.no_run_immediately,
+                account=args.account,
+            )
         else:
             result = main(no_run_immediately=args.no_run_immediately)
         if result is False:

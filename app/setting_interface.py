@@ -2,8 +2,10 @@ from PySide6.QtCore import Qt, QUrl, QObject, QEvent, QPoint, QThread, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QWidget, QLabel, QFileDialog, QVBoxLayout, QStackedWidget, QSpacerItem, QScroller, QScrollerProperties, QScrollArea, QFrame, QApplication
 from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets import Theme, qconfig
 from qfluentwidgets import SettingCardGroup, PushSettingCard, ScrollArea, InfoBar, InfoBarPosition, PrimaryPushSettingCard, MessageBox, PushButton, StateToolTip
 from app.sub_interfaces.accounts_interface import accounts_interface
+from app.sub_interfaces.multi_account_interface import MultiAccountGroup  # TODO [MULTI_ACCOUNT]
 from .common.style_sheet import StyleSheet
 from .common.icon import UiIcon, BrandIcon
 from .components.pivot import SettingPivot
@@ -28,6 +30,73 @@ import os
 import random
 import sys
 import platform
+
+
+# TODO [MULTI_ACCOUNT] 软刷新工具：按 cfg 的值同步卡片控件显示，拦截信号（不写盘、不重载）
+def _find_combo_value_index(combo, value) -> int:
+    for index in range(combo.count()):
+        if combo.itemData(index) == value:
+            return index
+    for index in range(combo.count()):
+        data = combo.itemData(index)
+        if data is not None and str(data) == str(value):
+            return index
+    for index in range(combo.count()):
+        if combo.itemText(index) == str(value):
+            return index
+    return -1
+
+
+def _refresh_card_value(card, value) -> bool:
+    """把单个卡片上的控件同步为 value；拦截信号，避免触发保存/重载等副作用。"""
+    from PySide6.QtCore import QSignalBlocker
+
+    updated = False
+
+    switch = getattr(card, "switchButton", None)
+    if switch is not None and isinstance(value, bool):
+        set_value = getattr(card, "setValue", None)
+        with QSignalBlocker(switch):
+            if callable(set_value):
+                set_value(value)
+            else:
+                switch.setChecked(value)
+        updated = True
+
+    combo = getattr(card, "comboBox", None)
+    if combo is not None and hasattr(combo, "setCurrentIndex"):
+        combo_value = value
+        configname2 = getattr(card, "configname2", None)
+        if isinstance(configname2, str) and configname2:
+            try:
+                combo_value = cfg.get_value(configname2)
+            except Exception:
+                combo_value = value
+        index = _find_combo_value_index(combo, combo_value)
+        if index >= 0:
+            if combo.currentIndex() != index:
+                with QSignalBlocker(combo):
+                    combo.setCurrentIndex(index)
+            updated = True
+
+    slider = getattr(card, "slider", None)
+    if slider is not None and hasattr(slider, "setValue") and not isinstance(value, bool):
+        number = int(value)
+        with QSignalBlocker(slider):
+            slider.setValue(number)
+        label = getattr(card, "valueLabel", None)
+        if label is not None and hasattr(label, "setNum"):
+            label.setNum(number)
+        updated = True
+
+    if updated:
+        return True
+
+    set_value = getattr(card, "setValue", None)
+    if callable(set_value) and isinstance(value, bool):
+        set_value(value)
+        return True
+    return False
 
 
 class QqBotBindThread(QThread):
@@ -2879,6 +2948,13 @@ class SettingInterface(ScrollArea):
             self.useBackgroundScreenshotCard.setHidden(True)
             self.cloudGameEnableCard.setDisabled(True)  # 在配置文件中强制启用，禁止用户修改
 
+        # TODO [MULTI_ACCOUNT] 多账号管理（置顶显示，切号即刷新下方各配置页）
+        self.multiAccountGroup = MultiAccountGroup(self.scrollWidget)
+        self.addSubInterface(
+            self.multiAccountGroup,
+            'MultiAccountInterface',
+            tr('多账号')
+        )
         self.addSubInterface(self.PowerGroup, 'PowerInterface', tr('体力'))
         # self.addSubInterface(self.BorrowGroup, 'BorrowInterface', '支援')
         self.addSubInterface(self.DailyGroup, 'DailyInterface', tr('日常'))
@@ -2912,6 +2988,9 @@ class SettingInterface(ScrollArea):
         self.pivot.setCurrentItem(self.stackedWidget.currentWidget().objectName())
         self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
 
+        # [MULTI_ACCOUNT] 顶部账号操作栏悬浮在「设置」标题右侧，任何 Tab 下都能操作
+        self._attach_account_bar()
+
         # ── pivot 尺寸与滚动过滤器 ────────────────────────────────────
         # 所有 addItem 调用完成后 pivot 才能计算正确宽度
         self.pivot.adjustSize()
@@ -2927,6 +3006,101 @@ class SettingInterface(ScrollArea):
         # 随窗口宽度同步 pivot 滚动容器宽度（right margin = 40px 与布局对齐）
         if self.width() > 0:
             self.pivotScrollArea.setFixedWidth(max(self.width() - 40, 400))
+        self._layout_account_bar()
+
+    # ── [MULTI_ACCOUNT] 悬浮顶部账号栏 ────────────────────────────────
+    # 这些 Tab 与账号相关，切到它们时保持顶部账号栏可见
+    _ACCOUNT_TAB_NAMES = frozenset({
+        'MultiAccountInterface',
+        'PowerInterface',
+        'DailyInterface',
+        'CurrencywarsInterface',
+        'UniverseInterface',
+        'FightInterface',
+        'ImmortalGameInterface',
+        'AccountsInterface',
+    })
+
+    def _attach_account_bar(self):
+        """把多账号页的顶部操作栏装进半透明胶囊底座，悬浮在「设置」标题右侧。"""
+        group = getattr(self, 'multiAccountGroup', None)
+        if group is None:
+            return
+
+        frame = getattr(self, 'account_bar_frame', None)
+        if frame is None:
+            frame = QFrame(self)
+            frame.setObjectName("AccountBarCapsule")
+            frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            frame_layout = QVBoxLayout(frame)
+            frame_layout.setContentsMargins(0, 0, 0, 0)
+            frame_layout.setSpacing(0)
+            self.account_bar_frame = frame
+            try:
+                qconfig.themeChanged.connect(self._refresh_account_bar_style)
+            except Exception:
+                pass
+
+        bar = group.topBar
+        if bar.parent() is not frame:
+            bar.setParent(frame)
+            frame.layout().addWidget(bar)
+        bar.show()
+        self.accountBar = bar
+
+        frame.show()
+        frame.raise_()
+        self._refresh_account_bar_style()
+        self._layout_account_bar()
+        current = self.stackedWidget.currentWidget()
+        if current is not None:
+            self._update_account_bar_visibility(current.objectName())
+
+    def _layout_account_bar(self):
+        """胶囊底座按内容自适应宽度，紧跟在「设置」标题右侧（窗口过窄时向内收）。"""
+        frame = getattr(self, 'account_bar_frame', None)
+        if frame is None or self.width() <= 0:
+            return
+        frame.adjustSize()
+        width = frame.width()
+        x = 160
+        if x + width > self.width() - 20:
+            x = max(20, self.width() - width - 20)
+        frame.move(x, 25)
+
+    def _refresh_account_bar_style(self, *args):
+        """按当前主题刷新胶囊底座的半透明底色/描边，避免深浅色模式下割裂。"""
+        frame = getattr(self, 'account_bar_frame', None)
+        if frame is None:
+            return
+        dark = False
+        try:
+            dark = qconfig.theme == Theme.DARK
+        except Exception:
+            dark = False
+        if dark:
+            # 深色模式：底色更暗，透明度降到 0.6
+            background, border = 'rgba(45, 45, 45, 0.7)', 'rgba(255, 255, 255, 0.06)'
+        else:
+            # 浅色模式：底色调到接近纯白(250)，透明度降到 0.45
+            background, border = 'rgba(250, 250, 250, 0.55)', 'rgba(0, 0, 0, 0.03)'
+        frame.setStyleSheet(
+            "QFrame#AccountBarCapsule {\n"
+            f"  background-color: {background};\n"
+            "  border-radius: 20px;\n"
+            f"  border: 1px solid {border};\n"
+            "}\n"
+        )
+
+    def _update_account_bar_visibility(self, objectName: str):
+        frame = getattr(self, 'account_bar_frame', None)
+        if frame is None:
+            return
+        visible = objectName in self._ACCOUNT_TAB_NAMES
+        frame.setVisible(visible)
+        if visible:
+            self._layout_account_bar()
+            frame.raise_()
 
     def __connectSignalToSlot(self):
         def connect_expand_state(card):
@@ -3323,6 +3497,8 @@ class SettingInterface(ScrollArea):
 
         self.verticalScrollBar().setValue(0)
         self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
+        # [MULTI_ACCOUNT] 非账号相关 Tab 隐藏悬浮账号栏，避免遮挡卡片
+        self._update_account_bar_visibility(widget.objectName())
 
     # def __onImportConfigCardClicked(self):
     #     configdir, _ = QFileDialog.getOpenFileName(self, "选取配置文件", "./", "Config Files (*.yaml)")
@@ -3455,6 +3631,25 @@ class SettingInterface(ScrollArea):
             duration=2000,
             parent=self
         )
+
+    # TODO [MULTI_ACCOUNT] 软刷新：切号后只改卡片显示的值，不销毁/重建任何控件，也不弹提示
+    def refresh_values(self) -> int:
+        """按当前 cfg 静默刷新所有带 configname 的卡片（返回刷新的卡片数）。"""
+        updated = 0
+        for card in self.findChildren(QWidget):
+            configname = getattr(card, "configname", None)
+            if not isinstance(configname, str) or not configname:
+                continue
+            try:
+                value = cfg.get_value(configname)
+            except Exception:
+                continue
+            try:
+                if _refresh_card_value(card, value):
+                    updated += 1
+            except Exception:
+                continue
+        return updated
 
     def __onExpandableCardStateChanged(self, is_expanding: bool):
         """可展开卡片状态改变时，调整 stackedWidget 高度以包含子卡片"""
