@@ -180,6 +180,8 @@ pyrightconfig.json
 
 # Test
 /test.py
+tests/memory_log.txt
+tests/monitor.py
 
 # March7thAssistant
 /*config.yaml

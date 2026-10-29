@@ -116,11 +116,24 @@ def run_multi_account(account_ids=None) -> int:
                     raise RuntimeError("切号后未找到游戏窗口")
                 log.info("[多账号] 进入游戏完成，开始执行任务")
 
-                # 【添加这一行】强制切前台并确保输入法为英文，防止游戏画面失去焦点，导致无法后续按键操作事件
+                # 1. 强行把游戏拉到最前
                 game.switch_to_game()
+                time.sleep(1)
+
+                # 2. 模拟鼠标点击屏幕正中心，夺回焦点
                 try:
-                    from tasks.game import ensure_IME_lang_en
-                    ensure_IME_lang_en()
+                    from module.automation import auto
+                    auto.click_point(0.5, 0.5)
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+
+                # 3. 【完美替代方案】模拟按下 Shift 键，静默切换中英文
+                try:
+                    import pyautogui
+                    pyautogui.press('shift')
+                    time.sleep(0.2)
+                    log.info("[多账号] 已模拟按键修正输入法状态")
                 except Exception:
                     pass
 
@@ -208,14 +221,7 @@ def run_multi_account(account_ids=None) -> int:
                 log.info("[多账号] 图形界面不支持循环模式，本次轮询结束；需要定时轮询请使用日志界面的「定时运行」")
             else:
                 try:
-                    # 强制把游戏切到最顶层，并确保输入法为英文，防止按 M 键变成打字
-                    game.switch_to_game()
-                    try:
-                        from tasks.game import ensure_IME_lang_en
-                        ensure_IME_lang_en()
-                    except Exception:
-                        pass
-                    game.stop(True)
+                    game.stop(True)  # 直接交给原项目去退出
                 except SystemExit:
                     raise
                 except Exception as e:

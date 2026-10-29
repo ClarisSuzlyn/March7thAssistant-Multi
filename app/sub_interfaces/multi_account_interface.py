@@ -91,6 +91,23 @@ class _PasswordBox(QWidget):
     def setText(self, text: str):
         self.edit.setText(text)
 
+    def reset_to_password_mode(self):
+        """【新增】强制恢复为密码隐藏模式，并重置眼睛图标"""
+        self.edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.toggleButton.setIcon(FIF.VIEW)
+
+def mask_text(text, is_email=False):
+    """对手机号或邮箱进行脱敏处理"""
+    if not text or len(text) < 5:
+        return text
+    if is_email and "@" in text:
+        prefix, domain = text.split("@", 1)
+        if len(prefix) <= 3:
+            return f"{prefix[0]}***@{domain}"
+        return f"{prefix[:3]}***@{domain}"
+    # 默认按手机号处理
+    return f"{text[:3]}******{text[-2:]}"
+
 
 class MultiAccountGroup(SettingCardGroup):
     """设置页里的「多账号」分组。"""
@@ -233,6 +250,34 @@ class MultiAccountGroup(SettingCardGroup):
         self.userEdit = LineEdit(self)
         self.userEdit.setPlaceholderText(tr("手机号或邮箱"))
         self.userEdit.setFixedWidth(260)
+
+        # ================= 【新增焦点事件处理】 =================
+        def on_focus_in(event):
+            # 1. 聚焦时：恢复明文
+            real_text = getattr(self.userEdit, '_real_text', '')
+            if real_text:
+                self.userEdit.setText(real_text)
+            # 调用父类默认处理（保证光标正常显示）
+            QWidget.focusInEvent(self.userEdit, event)
+
+        def on_focus_out(event):
+            # 2. 失焦时：保存最新修改的文本，然后脱敏
+            current_text = self.userEdit.text().strip()
+            if current_text and "*" not in current_text:
+                self.userEdit._real_text = current_text  # 更新真实值
+
+            real_text = getattr(self.userEdit, '_real_text', '')
+            if real_text:
+                is_mail = "@" in real_text
+                self.userEdit.setText(mask_text(real_text, is_mail))
+            # 调用父类默认处理
+            QWidget.focusOutEvent(self.userEdit, event)
+
+        # 绑定事件
+        self.userEdit.focusInEvent = on_focus_in
+        self.userEdit.focusOutEvent = on_focus_out
+        # ========================================================
+
         self.accountGroup.addSettingCard(
             self._input_card(FIF.PEOPLE, tr("登录账号"), tr("游戏登录用的手机号或邮箱"), self.userEdit)
         )
@@ -313,8 +358,17 @@ class MultiAccountGroup(SettingCardGroup):
         loaded = dict(self._loaded)
         username, password = am.load_credential(am.current_id()) if am.current_id() else ("", "")
         loaded["credential"] = (username or "", password or "")
+
         current = self._widgets_snapshot()
-        current["credential"] = (self.userEdit.text().strip(), self.pwdInput.text())
+
+        # ===== 【修复】获取真实的当前账号，忽略脱敏星号 =====
+        current_text = self.userEdit.text().strip()
+        if "*" in current_text:
+            current_username = getattr(self.userEdit, '_real_text', "")
+        else:
+            current_username = current_text
+
+        current["credential"] = (current_username, self.pwdInput.text())
         return loaded != current
 
     def _current_account(self) -> dict | None:
@@ -365,8 +419,18 @@ class MultiAccountGroup(SettingCardGroup):
             self.pathEdit.setEnabled(not snapshot["use_global_path"])
             self.browseButton.setEnabled(not snapshot["use_global_path"])
             username, password = am.load_credential(account["id"])
-            self.userEdit.setText(username or "")
+            # 【修改开始】加载时显示脱敏账号，并暗存真实账号
+            if username:
+                is_mail = "@" in username
+                self.userEdit.setText(mask_text(username, is_mail))
+                self.userEdit._real_text = username  # 把真实值绑在控件上
+            else:
+                self.userEdit.setText("")
+                self.userEdit._real_text = ""
+            # 【修改结束】
+
             self.pwdInput.setText(password or "")
+            self.pwdInput.reset_to_password_mode()  # 【新增】切号时强制恢复为密文状态
             self.autoLoginBox.setChecked(snapshot["auto_login"])
             self.reloginBox.setChecked(snapshot["relogin"])
             index = self.afterFinishCombo.findData(snapshot["after_finish"])
@@ -578,7 +642,15 @@ class MultiAccountGroup(SettingCardGroup):
             return False
         # ====================
 
-        username = self.userEdit.text().strip()
+        # 【修改这里】获取真实 username
+        current_text = self.userEdit.text().strip()
+        if "*" in current_text:
+            # 如果框里是星号，说明用户没动过它，从内存里取真值
+            username = getattr(self.userEdit, '_real_text', "")
+        else:
+            # 用户点进去改过了，直接取新值
+            username = current_text
+
         password = self.pwdInput.text()
         try:
             am.update_account(
