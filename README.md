@@ -2,6 +2,10 @@
 
 本项目基于 [March7thAssistant](https://github.com/moesnow/March7thAssistant) 进行二次开发与功能扩展，旨在为其提供**多账号自动化轮询**与**视觉切号**能力。
 
+> ⚠️ **重要提示**：本项目是 `March7thAssistant` 的**非官方衍生分支**，专注于多账号自动化功能。原项目的所有功能与版权归原作者 `moesnow` 所有。本分支并非原项目官方版本，请勿混淆。
+>
+> **如果你需要原项目的官方版本，请访问**：[moesnow/March7thAssistant](https://github.com/moesnow/March7thAssistant)
+
 在开发多账号配置与切换逻辑时，参考并借鉴了 [StarRailAssistant](https://github.com/Shasnow/StarRailAssistant) 的多账号实现思路。
 
 ## ✨ 核心特性
@@ -189,6 +193,10 @@ March7thAssistant 离不开以下开源项目和运行时依赖的帮助，感�
 
 此外，`requirements.txt` 中还包含大量底层依赖，在这里不一一列出；同样感谢这些项目对本项目的支持。
 
+
+### 🙏 原项目贡献者
+
+以下贡献者列表来自原项目 `moesnow/March7thAssistant`。本多账号分支的代码基于他们的卓越工作构建：
 
 ## Contributors
 <a href="https://github.com/moesnow/March7thAssistant/graphs/contributors">
