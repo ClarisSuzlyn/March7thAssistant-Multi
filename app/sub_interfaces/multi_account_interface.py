@@ -10,7 +10,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QSize
+import os
+import threading
+
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -48,7 +51,7 @@ from module.localization import tr
 
 
 def _account_channels():
-    return ((tr("官服"), 0), (tr("B服"), 1))
+    return ((tr("官服"), 0), (tr("B服（暂未开放）"), 1), (tr("国际服（暂未开放）"), 2))
 
 
 def _after_finish_items():
@@ -112,17 +115,28 @@ def mask_text(text, is_email=False):
 class MultiAccountGroup(SettingCardGroup):
     """设置页里的「多账号」分组。"""
 
+    # [MULTI_ACCOUNT] 后台线程检查更新后，用信号切回 GUI 线程弹提示
+    updateAvailable = Signal(str, str)
+
     def __init__(self, parent=None):
         super().__init__(tr("多账号"), parent)
         self.account_ids: list[str] = []
         self._loading = False
         self._loaded: dict | None = None
+        self._starting = False
+        self._channel_warned = -1
         self.channels = _account_channels()
         self.after_finish_items = _after_finish_items()
+
+        self.updateAvailable.connect(self._on_update_found)
+        self._startTimer = QTimer(self)
+        self._startTimer.setSingleShot(True)
+        self._startTimer.timeout.connect(self._clear_starting)
 
         self._build_top_bar()
         self._build_account_group()
         self._build_after_finish_group()
+        self._build_advanced_group()
 
         self.tipLabel = QLabel(
             tr(
@@ -139,6 +153,9 @@ class MultiAccountGroup(SettingCardGroup):
         self.vBoxLayout.addWidget(self.tipLabel)
 
         self._reload_from_store()
+
+        # [MULTI_ACCOUNT] 后台检查原项目是否有新版本（不阻塞界面，不自动更新）
+        QTimer.singleShot(1500, self._start_update_check)
 
     # ---------------------------------------------------------------- UI
     def _build_top_bar(self):
@@ -222,8 +239,14 @@ class MultiAccountGroup(SettingCardGroup):
         self.channelCombo.setFixedWidth(200)
         for label, _ in self.channels:
             self.channelCombo.addItem(label)
+        self.channelCombo.currentIndexChanged.connect(self._on_channel_changed)
         self.accountGroup.addSettingCard(
-            self._input_card(FIF.GLOBE, tr("渠道服"), tr("官服 / B服（暂未开放）"), self.channelCombo)
+            self._input_card(
+                FIF.GLOBE,
+                tr("渠道服"),
+                tr("官服 / B服（暂未开放）/ 国际服（暂未开放）"),
+                self.channelCombo,
+            )
         )
 
         pathWidget = QWidget(self)
@@ -318,6 +341,94 @@ class MultiAccountGroup(SettingCardGroup):
             )
         )
         self.vBoxLayout.addWidget(self.afterFinishGroup)
+
+    def _build_advanced_group(self):
+        """[MULTI_ACCOUNT] 高级：内存黑匣子 + 闪退现场。"""
+        self.advancedGroup = SettingCardGroup(tr("高级"), self)
+
+        self.memorySwitch = SwitchButton(self)
+        self.memorySwitch.setOnText("")
+        self.memorySwitch.setOffText("")
+        self.memorySwitch.setChecked(bool(am.option("memory_monitor", False)))
+        self.memorySwitch.checkedChanged.connect(self._on_memory_monitor_changed)
+        self.advancedGroup.addSettingCard(
+            self._input_card(
+                FIF.HEART,
+                tr("内存黑匣子"),
+                tr("每 10 秒记录 StarRail.exe 内存；闪退时把内存曲线和日志尾部保存到本地"),
+                self.memorySwitch,
+            )
+        )
+
+        self.crashButton = PushButton(tr("打开黑匣子日志"), self)
+        self.crashButton.clicked.connect(self._open_crash_dir)
+        self.advancedGroup.addSettingCard(
+            self._input_card(
+                FIF.DOCUMENT,
+                tr("闪退现场"),
+                tr("保存在 settings/multi_account/crash_logs/，只留在本机"),
+                self.crashButton,
+            )
+        )
+        self.vBoxLayout.addWidget(self.advancedGroup)
+
+    def _on_memory_monitor_changed(self, checked: bool):
+        from core.memory_monitor import get_memory_monitor
+
+        am.set_options(memory_monitor=bool(checked))
+        monitor = get_memory_monitor()
+        if checked:
+            monitor.start()
+        else:
+            monitor.stop()
+        self._toast(
+            tr("内存黑匣子"),
+            tr("已开启：闪退时会保存现场") if checked else tr("已关闭"),
+        )
+
+    def _open_crash_dir(self):
+        from core.memory_monitor import CRASH_DIR
+
+        path = os.path.abspath(CRASH_DIR)
+        try:
+            os.makedirs(path, exist_ok=True)
+            if hasattr(os, "startfile"):
+                os.startfile(path)  # noqa: S606 - 仅本机打开资源管理器
+            else:
+                self._toast(tr("闪退现场"), path)
+        except Exception as e:
+            self._toast(tr("打开失败"), str(e), success=False)
+
+    # ---------------------------------------------------------- 更新提醒
+    def _start_update_check(self):
+        """[MULTI_ACCOUNT] 后台线程读 GitHub Release，有更新才提示。"""
+        try:
+            current = str(cfg.get_value("version") or "")
+        except Exception:
+            current = ""
+        if not current:
+            return
+
+        def worker():
+            from core import update_check
+
+            found = update_check.check_latest(current)
+            if found:
+                self.updateAvailable.emit(found[0], found[1])
+
+        threading.Thread(target=worker, name="multi-account-update", daemon=True).start()
+
+    def _on_update_found(self, tag: str, url: str):
+        from module.logger import log
+
+        log.info(f"[多账号] 原项目有更新：{tag}（当前 {cfg.get_value('version')}）{url}")
+        InfoBar.success(
+            tr("原项目有更新"),
+            tr("发现新版本 {version}，请前往 GitHub 更新（不会自动下载）").format(version=tag),
+            parent=self.window() or self,
+            duration=8000,
+            position=InfoBarPosition.TOP,
+        )
 
     def _input_card(self, icon, title: str, content: str, widget: QWidget) -> SettingCard:
         card = SettingCard(icon, title, content, self)
@@ -443,6 +554,19 @@ class MultiAccountGroup(SettingCardGroup):
     def _on_path_switch_changed(self, checked: bool):
         self.pathEdit.setEnabled(not checked)
         self.browseButton.setEnabled(not checked)
+
+    def _on_channel_changed(self, index: int):
+        """[MULTI_ACCOUNT] B服 / 国际服暂未适配，选中即提示。"""
+        if self._loading or index <= 0 or index == self._channel_warned:
+            return
+        self._channel_warned = index
+        InfoBar.warning(
+            tr("暂未适配"),
+            tr("该渠道服暂未适配自动登录，只有官服可正常切号，请切回官服"),
+            parent=self.window() or self,
+            duration=5000,
+            position=InfoBarPosition.TOP,
+        )
 
     # ------------------------------------------------------------- 动作
     def _toast(self, title: str, content: str, success: bool = True):
@@ -676,9 +800,19 @@ class MultiAccountGroup(SettingCardGroup):
         return True
 
     def _prepare_start(self) -> bool:
+        """[MULTI_ACCOUNT] 启动前校验：防抖、云游戏、渠道服。"""
+        if self._starting:
+            self._toast(tr("请稍候"), tr("已有账号任务正在启动"), success=False)
+            return False
+        if bool(cfg.get_value("cloud_game_enable", False)):
+            self._toast(tr("无法启动"), tr("云游戏模式暂不支持多账号切号，请先在「云游戏」里关闭"), success=False)
+            return False
         account = self._current_account()
         if account is None:
             self._toast(tr("无法启动"), tr("请先在「多账号」页添加账号"), success=False)
+            return False
+        if am.normalize_channel(account.get("channel")) != 0:
+            self._toast(tr("无法启动"), tr("渠道服暂未适配自动登录，请把该账号切回官服"), success=False)
             return False
         if self._is_dirty() and not self._on_save(silent=True):
             return False
@@ -689,18 +823,38 @@ class MultiAccountGroup(SettingCardGroup):
             return False
         return True
 
+    def _begin_starting(self):
+        self._starting = True
+        self.startButton.setEnabled(False)
+        self._startTimer.start(4000)
+        log_interface = getattr(self.window(), "logInterface", None)
+        if log_interface is not None and not getattr(self, "_finished_hooked", False):
+            try:
+                log_interface.taskFinished.connect(lambda *_: self._clear_starting())
+                self._finished_hooked = True
+            except Exception:
+                pass
+
+    def _clear_starting(self):
+        self._starting = False
+        self.startButton.setEnabled(True)
+
     def _on_start_current(self):
-        if self._prepare_start():
-            account = self._current_account()
-            # [MULTI_ACCOUNT] 必须带上账号 ID，否则子进程会当成「完整运行」直接跑 main
-            if account:
-                signalBus.startTaskSignal.emit(f"multi_account --account {account['id']}")
-            else:
-                signalBus.startTaskSignal.emit("multi_account")
+        if not self._prepare_start():
+            return
+        account = self._current_account()
+        # [MULTI_ACCOUNT] 必须带上账号 ID，否则子进程会当成「完整运行」直接跑 main
+        self._begin_starting()
+        if account:
+            signalBus.startTaskSignal.emit(f"multi_account --account {account['id']}")
+        else:
+            signalBus.startTaskSignal.emit("multi_account")
 
     def _on_start_all(self):
-        if self._prepare_start():
-            signalBus.startTaskSignal.emit("multi_account")
+        if not self._prepare_start():
+            return
+        self._begin_starting()
+        signalBus.startTaskSignal.emit("multi_account")
 
     def _is_name_duplicated(self, name: str, exclude_id: str | None = None) -> bool:
         """检查账号名称是否与现有账号重复（排除自身）"""

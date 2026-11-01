@@ -3497,7 +3497,7 @@ class SettingInterface(ScrollArea):
 
         self.verticalScrollBar().setValue(0)
         self.stackedWidget.setFixedHeight(self.stackedWidget.currentWidget().sizeHint().height())
-        # [MULTI_ACCOUNT] 非账号相关 Tab 隐藏悬浮账号栏，避免遮挡卡片
+        # TODO [MULTI_ACCOUNT] 非账号相关 Tab 隐藏悬浮账号栏，避免遮挡卡片
         self._update_account_bar_visibility(widget.objectName())
 
     # def __onImportConfigCardClicked(self):

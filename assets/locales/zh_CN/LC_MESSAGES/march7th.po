@@ -6593,3 +6593,83 @@ msgstr "配置已保存"
 #: app/sub_interfaces/multi_account_interface.py:155
 msgid "保存当前账号配置"
 msgstr "保存当前账号配置"
+
+#: app/sub_interfaces/multi_account_interface.py:54
+msgid "B服（暂未开放）"
+msgstr "B服（暂未开放）"
+
+#: app/sub_interfaces/multi_account_interface.py:54
+msgid "国际服（暂未开放）"
+msgstr "国际服（暂未开放）"
+
+#: app/sub_interfaces/multi_account_interface.py:247
+msgid "官服 / B服（暂未开放）/ 国际服（暂未开放）"
+msgstr "官服 / B服（暂未开放）/ 国际服（暂未开放）"
+
+#: app/sub_interfaces/multi_account_interface.py:347
+msgid "高级"
+msgstr "高级"
+
+#: app/sub_interfaces/multi_account_interface.py:357
+msgid "内存黑匣子"
+msgstr "内存黑匣子"
+
+#: app/sub_interfaces/multi_account_interface.py:358
+msgid "每 10 秒记录 StarRail.exe 内存；闪退时把内存曲线和日志尾部保存到本地"
+msgstr "每 10 秒记录 StarRail.exe 内存；闪退时把内存曲线和日志尾部保存到本地"
+
+#: app/sub_interfaces/multi_account_interface.py:363
+msgid "打开黑匣子日志"
+msgstr "打开黑匣子日志"
+
+#: app/sub_interfaces/multi_account_interface.py:368
+msgid "闪退现场"
+msgstr "闪退现场"
+
+#: app/sub_interfaces/multi_account_interface.py:369
+msgid "保存在 settings/multi_account/crash_logs/，只留在本机"
+msgstr "保存在 settings/multi_account/crash_logs/，只留在本机"
+
+#: app/sub_interfaces/multi_account_interface.py:386
+msgid "已开启：闪退时会保存现场"
+msgstr "已开启：闪退时会保存现场"
+
+#: app/sub_interfaces/multi_account_interface.py:386
+msgid "已关闭"
+msgstr "已关闭"
+
+#: app/sub_interfaces/multi_account_interface.py:400
+msgid "打开失败"
+msgstr "打开失败"
+
+#: app/sub_interfaces/multi_account_interface.py:426
+msgid "原项目有更新"
+msgstr "原项目有更新"
+
+#: app/sub_interfaces/multi_account_interface.py:427
+msgid "发现新版本 {version}，请前往 GitHub 更新（不会自动下载）"
+msgstr "发现新版本 {version}，请前往 GitHub 更新（不会自动下载）"
+
+#: app/sub_interfaces/multi_account_interface.py:564
+msgid "暂未适配"
+msgstr "暂未适配"
+
+#: app/sub_interfaces/multi_account_interface.py:565
+msgid "该渠道服暂未适配自动登录，只有官服可正常切号，请切回官服"
+msgstr "该渠道服暂未适配自动登录，只有官服可正常切号，请切回官服"
+
+#: app/sub_interfaces/multi_account_interface.py:805
+msgid "请稍候"
+msgstr "请稍候"
+
+#: app/sub_interfaces/multi_account_interface.py:805
+msgid "已有账号任务正在启动"
+msgstr "已有账号任务正在启动"
+
+#: app/sub_interfaces/multi_account_interface.py:808
+msgid "云游戏模式暂不支持多账号切号，请先在「云游戏」里关闭"
+msgstr "云游戏模式暂不支持多账号切号，请先在「云游戏」里关闭"
+
+#: app/sub_interfaces/multi_account_interface.py:815
+msgid "渠道服暂未适配自动登录，请把该账号切回官服"
+msgstr "渠道服暂未适配自动登录，请把该账号切回官服"

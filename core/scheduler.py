@@ -39,6 +39,70 @@ def _notify(message: str):
         log.debug(f"[多账号] 任务通知发送失败: {e}")
 
 
+def _prepare_resolution(cfg) -> None:
+    """启动前 / 运行中把游戏分辨率纠正为 1920x1080（复用原项目 StarRailController 的方法）。
+
+    - 客户端没运行：直接改注册表（下次启动生效），再交给原项目拉起；
+    - 客户端已在运行但分辨率不对：按原项目风格 10 秒提示一次、给 3 次手动调整机会；
+      仍然不对就关闭客户端 → 修改分辨率 → 由后续流程重新启动（重新登录由切号状态机负责）。
+    """
+    try:
+        cfg.set_value("auto_set_resolution_enable", True)
+    except Exception:
+        pass
+    try:
+        from core.logout import close_game_client
+        from tasks.game.starrailcontroller import StarRailController
+
+        controller = StarRailController(cfg=cfg, logger=log)
+        if not controller.is_game_running():
+            controller.change_resolution(1920, 1080)
+            log.info("[多账号] 启动前已把游戏分辨率设为 1920x1080（窗口化，下次启动生效）")
+            return
+
+        resolution = controller.get_resolution()
+        if resolution and tuple(int(v) for v in resolution) == (1920, 1080):
+            log.info("[多账号] 当前游戏分辨率 1920x1080，无需调整")
+            return
+
+        for attempt in range(1, 4):
+            if resolution:
+                log.error(
+                    f"[多账号] 游戏分辨率 {resolution[0]}x{resolution[1]} 不是 1920x1080，"
+                    "请在游戏设置内切换为 1920x1080 窗口"
+                )
+            else:
+                log.error("[多账号] 暂时读不到游戏窗口分辨率，请确认游戏窗口已经打开")
+            log.error(f"[多账号] 将在 10 秒后重新检查（第 {attempt}/3 次），也可以现在手动修改分辨率")
+            time.sleep(10)
+            resolution = controller.get_resolution()
+            if resolution and tuple(int(v) for v in resolution) == (1920, 1080):
+                log.info("[多账号] 分辨率已修正为 1920x1080")
+                return
+
+        log.warning("[多账号] 3 次检查后分辨率仍不正确：关闭游戏 → 修改分辨率 → 重新启动")
+        close_game_client()
+        time.sleep(2)
+        controller.change_resolution(1920, 1080)
+        log.info("[多账号] 已写入 1920x1080，后续会重新启动游戏并重新登录")
+    except Exception as e:
+        log.debug(f"[多账号] 分辨率检查失败: {e}")
+
+
+def _unsupported_channel(account: dict) -> int | None:
+    """渠道服拦截：目前只适配官服（0），B服/国际服返回渠道值。"""
+    from core import account_manager as am
+
+    channel = am.normalize_channel(account.get("channel", "official"))
+    if channel != 0:
+        log.error(
+            f"[多账号] 账号「{account.get('name') or account.get('id')}」渠道为 {channel}（B服/国际服），"
+            "暂未适配，已跳过"
+        )
+        return channel
+    return None
+
+
 def run_multi_account(account_ids=None) -> int:
     from core import account_manager as am
     from core.logout import (
@@ -71,6 +135,28 @@ def run_multi_account(account_ids=None) -> int:
 
     log.hr(f"多账号轮询开始，共 {total} 个账号", 0)
 
+    # [MULTI_ACCOUNT] 云游戏下无法自动切号（浏览器沙箱），直接拦截
+    try:
+        if cfg.get_value("cloud_game_enable", False):
+            log.error("[多账号] 云游戏暂不支持多账号切号，请使用单账号任务或关闭「设置 → 云游戏」")
+            return 1
+    except Exception:
+        pass
+
+    # [MULTI_ACCOUNT] 开跑前先纠正游戏分辨率：没启动就写注册表，已启动且不对就提示/强杀重来
+    _prepare_resolution(cfg)
+
+    # [MULTI_ACCOUNT] 内存黑匣子：开启后每 10 秒记录 StarRail.exe 内存，闪退时保存现场
+    monitor = None
+    try:
+        from core.memory_monitor import get_memory_monitor
+
+        if am.option("memory_monitor", False):
+            monitor = get_memory_monitor()
+            monitor.start()
+    except Exception as e:
+        log.debug(f"[多账号] 启动内存黑匣子失败: {e}")
+
     # 版本检查与账号无关，只在整轮开始时执行一次；失败直接中止，避免每个账号都卡一次
     try:
         log.hr("多账号：版本检查", 0)
@@ -98,6 +184,14 @@ def run_multi_account(account_ids=None) -> int:
             if not am.switch_account(account["id"], cfg):
                 failed.append(name)
                 continue
+
+            # [MULTI_ACCOUNT] 渠道服拦截：B服/国际服暂未适配
+            if _unsupported_channel(account) is not None:
+                failed.append(name)
+                continue
+
+            # [MULTI_ACCOUNT] 每个账号开跑前再确认一次分辨率（手动开的低分辨率客户端会被纠正）
+            _prepare_resolution(cfg)
 
             # [MULTI_ACCOUNT] 先确认游戏客户端在运行：没启动就先拉起，再做任何截图/识别
             if not ensure_client_running():
@@ -148,8 +242,17 @@ def run_multi_account(account_ids=None) -> int:
                     log.warning("[多账号] 账号未填写登录账号/密码，直接使用当前登录的游戏账号")
                 game.start()
 
-            Daily.start()
-            reward.start()
+            # [MULTI_ACCOUNT] 黑匣子只在任务执行期间判定「进程消失」，避免切号误报
+            if monitor is not None:
+                monitor.arm()
+            try:
+                Daily.start()
+                reward.start()
+            finally:
+                if monitor is not None:
+                    # [MULTI_ACCOUNT] 先补一次采样再 disarm：异常/闪退瞬间不会被 10 秒轮询错过
+                    monitor.poll()
+                    monitor.disarm()
             if is_last:
                 last_ok = True
             results.append((name, True))
@@ -167,6 +270,9 @@ def run_multi_account(account_ids=None) -> int:
             return 130
         except Exception as e:
             results.append((name, False))
+            if monitor is not None:
+                # 强制生成黑匣子日志，确保抓到现场
+                monitor._dump_crash("任务执行期间发生异常，疑似游戏闪退")
             log.error(f"[多账号] 账号 {name} 执行失败（耗时 {_format_duration(time.time() - account_started)}）: {e}")
             log.error(traceback.format_exc())
             failed.append(name)
@@ -182,6 +288,8 @@ def run_multi_account(account_ids=None) -> int:
 
         # [MULTI_ACCOUNT] 低频节点强制回收内存：每个账号跑完只做一次，
         # 避免 OpenCV/PIL 的大图矩阵在长时间轮询里堆积（不是高频循环）
+        if monitor is not None:
+            monitor.poll()  # 收尾时补一条采样，保留最后的内存曲线
         gc.collect()
         log.info("[多账号] 已强制回收内存")
 
@@ -239,6 +347,8 @@ def run_multi_account(account_ids=None) -> int:
             log.hr("任务结束后：关闭程序（命令行模式随本任务退出）", 0)
 
     elapsed = _format_duration(time.time() - started)
+    if monitor is not None:
+        monitor.stop()
     for name, ok in results:
         log.info(f"[多账号] {name}：{'成功' if ok else '失败'}")
     if failed:

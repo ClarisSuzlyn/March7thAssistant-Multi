@@ -39,6 +39,8 @@ DEFAULT_OPTIONS = {
     "continue_on_error": True,
     # 账号之间的额外等待（秒）
     "switch_delay": 3,
+    # 内存黑匣子：每 10 秒记录 StarRail.exe 内存峰值，闪退时把记录和日志写到 crash_logs/
+    "memory_monitor": False,
 }
 
 # [MULTI_ACCOUNT] 账号级（私有）配置键白名单。
@@ -98,14 +100,24 @@ PRIVATE_KEYS = frozenset({
 # 每账号「任务结束后」行为：inherit = 沿用「程序设置 → 任务完成后操作」（可触发关机等）
 AFTER_FINISH_OPTIONS = ("inherit", "logout", "exit", "close", "none")
 
-# 渠道服：0 = 官服，1 = B服（旧数据里可能是 official / bilibili 字符串）
-CHANNEL_ALIASES = {"official": 0, "官服": 0, "cn": 0, "bilibili": 1, "b服": 1, "bl": 1}
+# 渠道服：0 = 官服，1 = B服，2 = 国际服（旧数据里可能是 official / bilibili 字符串）
+CHANNEL_ALIASES = {
+    "official": 0,
+    "官服": 0,
+    "cn": 0,
+    "bilibili": 1,
+    "b服": 1,
+    "bl": 1,
+    "international": 2,
+    "国际服": 2,
+    "gb": 2,
+}
 
 
 def normalize_channel(value) -> int:
     if isinstance(value, bool):
         return int(value)
-    if isinstance(value, int) and value in (0, 1):
+    if isinstance(value, int) and value in (0, 1, 2):
         return value
     return CHANNEL_ALIASES.get(str(value or "").strip().lower(), 0)
 

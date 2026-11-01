@@ -768,6 +768,14 @@ class MainWindow(MSFluentWindow):
                 if self.logInterface.process.state() != 0:  # QProcess.NotRunning
                     self.logInterface.process.kill()
                     self.logInterface.process.waitForFinished(1000)
+            # TODO [MULTI_ACCOUNT] 暂停(F8)后退出偶发残留 python.exe：按 PID 兜底再杀一次进程树
+            try:
+                pid = getattr(self.logInterface, '_last_kill_pid', 0)
+                if pid > 0 and self.logInterface._pid_alive(pid, timeout=1.0):
+                    log.warning(f"[main-window] 任务进程 {pid} 未退出，强制结束进程树")
+                    self.logInterface._killProcessTree(pid)
+            except Exception as e:
+                log.debug(f"[main-window] 兜底结束任务进程失败: {e}")
 
     def _do_quit(self, e=None):
         """执行退出前的清理并退出程序
@@ -787,6 +795,20 @@ class MainWindow(MSFluentWindow):
         # 停止运行任务和主题监听
         self._stopRunningTask()
         self._stopThemeListener()
+        # TODO [MULTI_ACCOUNT] 退出看门狗：任务进程卡死或 Qt 事件循环未正常结束时会残留 python.exe
+        try:
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(5000, lambda: os._exit(0))
+        except Exception:
+            pass
+
+        # [MULTI_ACCOUNT] 退出前按命令行再扫一遍本项目 main.py 进程，清掉暂停后脱离进程树的残留
+        try:
+            if hasattr(self, 'logInterface'):
+                self.logInterface.kill_all_task_processes()
+        except Exception as e:
+            log.debug(f"[main-window] 兜底清扫任务进程失败: {e}")
 
         # 可选地清理日志界面资源
         if hasattr(self, 'logInterface'):
@@ -802,7 +824,22 @@ class MainWindow(MSFluentWindow):
             except Exception:
                 pass
 
+        # ========================== 【插入开始】 ==========================
+        # 【新增】强杀由于多账号拉起的打包版子进程（必须放在 quit 之前）
+        import subprocess
+        try:
+            if getattr(sys, 'frozen', False):
+                subprocess.run(['taskkill', '/F', '/IM', 'March7th Assistant.exe'], capture_output=True, creationflags=0x08000000)
+        except Exception:
+            pass
+        # ========================== 【插入结束】 ==========================
+
         QApplication.quit()
+
+        # ========================== 【插入开始】 ==========================
+        # 【新增】最终暴力杀手锏：不管 Qt 还有没有挂起的清理，直接瞬间斩断当前主进程
+        os._exit(0)
+        # ========================== 【插入结束】 ==========================
 
     def closeEvent(self, e):
         """关闭窗口时根据配置执行对应操作"""

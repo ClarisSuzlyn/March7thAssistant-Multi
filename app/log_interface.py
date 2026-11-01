@@ -1495,6 +1495,8 @@ class LogInterface(ScrollArea):
 
             # 在 Windows 上使用 taskkill 来终止进程树
             pid = self.process.processId()
+            # TODO [MULTI_ACCOUNT] 记录 PID：停止后若进程仍存活，延时兜底再杀一次
+            self._last_kill_pid = pid
             # 主动停止期间抑制 errorOccurred 处理
             try:
                 self._suppress_process_error = True
@@ -1502,10 +1504,35 @@ class LogInterface(ScrollArea):
                 pass
             if pid > 0:
                 self._killProcessTree(pid)
+                # TODO [MULTI_ACCOUNT] 暂停(F8)后退出时偶发残留 python.exe：3 秒后统一兜底校验一次
+                QTimer.singleShot(3000, self._forceKillProcess)
             else:
                 self.process.terminate()
                 # 等待一段时间，如果还没结束就强制杀死
                 QTimer.singleShot(3000, self._forceKillProcess)
+
+    @staticmethod
+    def _pid_alive(pid, timeout=0.0):
+        """当前 PID 是否仍存活（不抛异常）。"""
+        if not pid or pid <= 0:
+            return False
+        import time as _time
+
+        try:
+            import psutil
+        except Exception:
+            return False
+        deadline = _time.time() + max(0.0, timeout)
+        while True:
+            try:
+                proc = psutil.Process(pid)
+                if proc.status() == psutil.STATUS_ZOMBIE:
+                    return False
+            except Exception:
+                return False
+            if _time.time() >= deadline:
+                return True
+            _time.sleep(0.2)
 
     def _killProcessTree(self, pid):
         """杀死进程树（包括所有子进程）"""
@@ -1518,6 +1545,25 @@ class LogInterface(ScrollArea):
                     capture_output=True,
                     creationflags=sp.CREATE_NO_WINDOW
                 )
+                # TODO [MULTI_ACCOUNT] taskkill 偶尔返回成功但进程未退出：校验后用 psutil 再杀一次
+                if self._pid_alive(pid, timeout=1.5):
+                    self.appendLog(f"进程 {pid} 未响应 taskkill，改用 psutil 强制结束\n")
+                    try:
+                        import psutil
+                        proc = psutil.Process(pid)
+                        for child in proc.children(recursive=True):
+                            try:
+                                child.kill()
+                            except Exception:
+                                pass
+                        proc.kill()
+                    except Exception:
+                        pass
+                    sp.run(
+                        ['taskkill', '/T', '/F', '/PID', str(pid)],
+                        capture_output=True,
+                        creationflags=sp.CREATE_NO_WINDOW
+                    )
             else:
                 # macOS / Linux: 递归获取并终止子进程，避免使用进程组以免误杀 GUI
                 import subprocess as sp
@@ -1587,14 +1633,94 @@ class LogInterface(ScrollArea):
                     pass
 
     def _forceKillProcess(self):
-        """强制结束进程"""
+        """强制结束进程（含残留兜底：QProcess 已退出时也要确认系统里没有残留进程）"""
+        pid = getattr(self, '_last_kill_pid', 0)
+        if pid <= 0 and self.process:
+            try:
+                pid = self.process.processId()
+            except Exception:
+                pid = 0
         if self.process and self.process.state() == QProcess.Running:
             self.appendLog("强制终止进程...\n")
-            pid = self.process.processId()
-            if pid > 0:
-                self._killProcessTree(pid)
-            else:
+        if pid > 0:
+            self._killProcessTree(pid)
+        if self.process and self.process.state() == QProcess.Running:
+            try:
                 self.process.kill()
+                self.process.waitForFinished(1000)
+            except Exception:
+                pass
+        # TODO [MULTI_ACCOUNT] 5 秒后再校验一次，彻底清掉暂停状态下残留的子进程
+        if pid > 0 and self._pid_alive(pid, timeout=2.0):
+            self.appendLog(f"警告：进程 {pid} 仍然存活，再次强制结束\n")
+            self._killProcessTree(pid)
+
+    def kill_all_task_processes(self):
+        """[MULTI_ACCOUNT] 兜底清扫：结束本项目所有 main.py 任务进程（含已脱离进程树的残留）。
+
+        QProcess 的 PID 在暂停 / 被替换 / 父进程已退出时可能已经拿不到，taskkill 只能覆盖
+        当时的进程树；这里再按「命令行包含本项目 main.py」扫一遍，避免托盘退出后残留
+        python.exe 继续跑上一次（已暂停）的任务。
+        """
+        import os
+        import subprocess as sp
+
+        script = os.path.abspath("main.py").lower()
+        pids = set()
+        try:
+            import psutil
+
+            pid = 0
+            if self.process:
+                try:
+                    pid = int(self.process.processId())
+                except Exception:
+                    pid = 0
+            if pid <= 0:
+                pid = int(getattr(self, "_last_kill_pid", 0) or 0)
+            if pid > 0:
+                pids.add(pid)
+                try:
+                    pids.update(child.pid for child in psutil.Process(pid).children(recursive=True))
+                except Exception:
+                    pass
+            #     存在问题，估计会把好多程序误杀
+            # for proc in psutil.process_iter(["pid", "cmdline"]):
+            #     try:
+            #         cmdline = " ".join(proc.info["cmdline"] or []).lower()
+            #     except Exception:
+            #         continue
+            #     if script and script in cmdline:
+            #         pids.add(int(proc.info["pid"]))
+        except Exception as e:
+            try:
+                self.appendLog(f"清扫残留任务进程失败: {e}\n")
+            except Exception:
+                pass
+
+        current = os.getpid()
+        killed = []
+        for pid in pids:
+            if pid <= 0 or pid == current:
+                continue
+            try:
+                if sys.platform == "win32":
+                    sp.run(
+                        ["taskkill", "/T", "/F", "/PID", str(pid)],
+                        capture_output=True,
+                        creationflags=sp.CREATE_NO_WINDOW,
+                    )
+                else:
+                    os.kill(pid, 9)
+                killed.append(pid)
+            except Exception:
+                continue
+        try:
+            if killed:
+                self.appendLog("已清理残留任务进程: " + ", ".join(str(pid) for pid in sorted(killed)) + "\n")
+        except Exception:
+            pass
+        return killed
 
     def _onTimeout(self, proc):
         """处理任务超时：如果 proc 仍是当前进程则标记并停止任务"""
@@ -2366,6 +2492,11 @@ class LogInterface(ScrollArea):
             self._schedule_timer.stop()
         if self._overlay_timer:
             self._overlay_timer.stop()
+        # [MULTI_ACCOUNT] 退出时按 PID / 命令行再兜底清扫一次，避免残留 next-round python.exe
+        try:
+            self.kill_all_task_processes()
+        except Exception:
+            pass
         # 取消等待中的完成后操作（若有）
         try:
             self._cancelPendingPostAction()

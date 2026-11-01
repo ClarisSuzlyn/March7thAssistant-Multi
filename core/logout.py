@@ -101,7 +101,7 @@ POLL = 1.0
 STEP_RETRIES = 3
 STEP_INTERVAL = 1.5
 GLOBAL_TIMEOUT = 120
-UNKNOWN_GRACE = 10  # 识别不到界面多久后按一次 ESC
+UNKNOWN_GRACE = 15  # 识别不到界面时的宽限秒数；只等待，不按任何按键
 
 # 界面状态
 STATE_IN_GAME = "in_game"
@@ -112,6 +112,16 @@ STATE_PHONE_FORM = "phone_form"
 STATE_PASSWORD_FORM = "password_form"
 STATE_CONFIRM_DIALOG = "confirm_dialog"
 STATE_UNKNOWN = "unknown"
+# TODO [MULTI_ACCOUNT] 人工验证 / 更新 / 编译着色器：这些状态绝对不按键、不点鼠标，只等待
+STATE_RISK_POPUP = "risk_popup"
+STATE_MANUAL_VERIFY = "manual_verify"
+STATE_UPDATING = "updating"
+STATE_COMPILING = "compiling"
+STATE_RESOURCE_DIALOG = "resource_dialog"
+# TODO [MULTI_ACCOUNT] 预留：云游戏 / B服 / 国际服（目前识别不到，走 UNKNOWN）
+STATE_CLOUD_GAME = "cloud_game"
+STATE_BILIBILI = "bilibili"
+STATE_OVERSEAS = "overseas"
 
 STATE_LABELS = {
     STATE_IN_GAME: "游戏内",
@@ -122,6 +132,14 @@ STATE_LABELS = {
     STATE_PASSWORD_FORM: "账号密码页",
     STATE_CONFIRM_DIALOG: "返回登录页面弹窗",
     STATE_UNKNOWN: "未知界面",
+    STATE_RISK_POPUP: "安全风险提示",
+    STATE_MANUAL_VERIFY: "人工验证（短信验证码）",
+    STATE_UPDATING: "下载数据资源",
+    STATE_COMPILING: "编译着色器",
+    STATE_RESOURCE_DIALOG: "任务资源下载提示",
+    STATE_CLOUD_GAME: "云游戏（暂不支持）",
+    STATE_BILIBILI: "B服（暂未适配）",
+    STATE_OVERSEAS: "国际服（暂未适配）",
 }
 LOGIN_STATES = frozenset({STATE_LOGIN_ICON, STATE_POPUP, STATE_PHONE_FORM, STATE_PASSWORD_FORM})
 
@@ -185,9 +203,9 @@ def _click_img(path: str, threshold: float = THRESHOLD, crop=(0, 0, 1, 1), retri
         return False
 
 
-def _find_text(text: str, include: bool = False, crop=(0, 0, 1, 1)) -> bool:
+def _find_text(text: str, include: bool = False, crop=(0, 0, 1, 1), need_ocr: bool = True) -> bool:
     try:
-        return bool(_auto().find_element(text, "text", include=include, crop=crop))
+        return bool(_auto().find_element(text, "text", include=include, crop=crop, need_ocr=need_ocr))
     except Exception as e:
         log.debug(f"[多账号] 查找文字 {text} 失败: {e}")
         return False
@@ -289,30 +307,120 @@ def is_game_running() -> bool:
         return False
 
 
+def _cached_text(text: str, include: bool = True, crop=None) -> bool:
+    """在当前 OCR 结果里找文字（不再截图/OCR，供 detect_state 单帧识别用）。"""
+    auto = _auto()
+    results = getattr(auto, "ocr_result", None) or []
+    if not results:
+        return False
+    if crop is None:
+        return any((text in value) if include else (value == text) for _, (value, _c) in results)
+    shot = getattr(auto, "screenshot", None)
+    if shot is None:
+        return False
+    width, height = shot.size
+    x1, y1 = crop[0] * width, crop[1] * height
+    x2, y2 = (crop[0] + crop[2]) * width, (crop[1] + crop[3]) * height
+    for box, (value, _c) in results:
+        if not ((text in value) if include else (value == text)):
+            continue
+        xs = [point[0] for point in box]
+        ys = [point[1] for point in box]
+        cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+        if x1 <= cx <= x2 and y1 <= cy <= y2:
+            return True
+    return False
+
+
+# 记录最近一次看到「安全风险」弹窗的时间：点击确定后会跳到游戏内网页做短信验证
+_RISK_SEEN_AT = 0.0
+
+
+def _note_risk_popup():
+    """记录「安全风险」弹窗出现时间，供识别随后的短信验证网页用。"""
+    global _RISK_SEEN_AT
+    _RISK_SEEN_AT = time.time()
+
+
+def _looks_like_web_page() -> bool:
+    """安全验证页是浅色网页：整屏偏亮、几乎没有深色内容；游戏内/标题页都是深色画面。"""
+    try:
+        from module.automation import auto  # noqa: F401  确认模块可用
+        shot = getattr(auto, "screenshot", None)
+        if shot is None:
+            return False
+        import numpy as np
+
+        arr = np.asarray(shot.convert("L"), dtype=np.uint8)
+        if arr.size == 0:
+            return False
+        height, width = arr.shape
+        center = arr[int(height * 0.12): int(height * 0.88), int(width * 0.10): int(width * 0.90)]
+        if center.size == 0:
+            return False
+        return float(center.mean()) > 195.0 and float((center < 120).mean()) < 0.02
+    except Exception:
+        return False
+
+
+def _cached_img(path: str, threshold: float = THRESHOLD) -> bool:
+    """在当前截帧上做模板匹配（不重新截图）。"""
+    try:
+        return bool(_auto().find_element(path, "image", threshold, 1, need_ocr=False, take_screenshot=False))
+    except Exception as e:
+        log.debug(f"[多账号] 缓存帧匹配模板 {path} 失败: {e}")
+        return False
+
+
 def detect_state(log_state: bool = False) -> str:
     """识别当前界面状态（顺序即优先级）。"""
     if not is_game_running():
         # 客户端没启动时不做任何截图/OCR，避免刷「截图失败：没有找到游戏窗口」
         return STATE_UNKNOWN
+    auto = _auto()
     try:
-        if _find_img(POP_CONFIRM_BTN) or _find_text("是否返回登录页面", crop=REGION_DIALOG):
+        # TODO [MULTI_ACCOUNT] 单帧识别：只截一次图 + 只跑一次 OCR，后续判断复用结果（性能/内存）
+        if not auto.take_screenshot():
+            return STATE_UNKNOWN
+        try:
+            auto.perform_ocr()
+        except Exception as e:
+            log.debug(f"[多账号] OCR 执行失败: {e}")
+        # TODO [MULTI_ACCOUNT] 安全风险 / 人工验证 / 更新 / 编译着色器优先识别：
+        # 这些界面一旦误判成标题页就会乱点乱按键，把游戏更新或验证打断。
+        if _cached_text("账号存在安全风险") or _cached_text("安全风险") or _cached_text("先验证身份") or _cached_text("再登录"):
+            state = STATE_RISK_POPUP
+            _note_risk_popup()
+        elif _cached_text("安全验证") or _cached_text("获取验证码") or _cached_text("输入验证码") or _cached_text(
+                "验证身份"):
+            state = STATE_MANUAL_VERIFY
+        elif _cached_text("正在编译着色器") or _cached_text("编译着色器"):
+            state = STATE_COMPILING
+        elif _cached_text("正在下载数据资源") or _cached_text("正在下载"):
+            state = STATE_UPDATING
+        elif _cached_text("任务资源管理"):
+            state = STATE_RESOURCE_DIALOG
+        elif _cached_img(POP_CONFIRM_BTN) or _cached_text("是否返回登录页面", crop=REGION_DIALOG):
             state = STATE_CONFIRM_DIALOG
-        elif _find_img(LOGIN_OTHER) or _find_text("登录其他账号", include=True, crop=(0.30, 0.55, 0.70, 0.95)):
+        elif _cached_img(LOGIN_OTHER) or _cached_text("登录其他账号", crop=(0.30, 0.55, 0.70, 0.95)):
             state = STATE_POPUP
-        elif _find_img(PASSWORD_INPUT) or (_find_img(USERNAME_INPUT) and _find_img(ENTER_GAME_BTN)):
+        elif _cached_img(PASSWORD_INPUT) or (_cached_img(USERNAME_INPUT) and _cached_img(ENTER_GAME_BTN)):
             state = STATE_PASSWORD_FORM
-        elif _find_img(ACC_PWD_TAB) or _find_img(ACC_PWD_TAB_ALT):
+        elif _cached_img(ACC_PWD_TAB) or _cached_img(ACC_PWD_TAB_ALT):
             state = STATE_PHONE_FORM
         elif (
-            _find_img(START_GAME_BTN)
-            or _find_text("开始游戏", include=True, crop=REGION_TITLE_BOTTOM)
-            or _find_img(CLICK_ENTER_BTN)
-            or _find_text("点击进入", include=True, crop=REGION_TITLE_BOTTOM)
+            _cached_img(START_GAME_BTN)
+            or _cached_text("开始游戏", crop=REGION_TITLE_BOTTOM)
+            or _cached_img(CLICK_ENTER_BTN)
+            or _cached_text("点击进入", crop=REGION_TITLE_BOTTOM)
         ):
             state = STATE_TITLE
-        elif _find_img(LOGIN_ICON) or _find_text("登入", crop=REGION_RIGHT):
+        elif _cached_img(LOGIN_ICON) or _cached_text("登入", crop=REGION_RIGHT):
             state = STATE_LOGIN_ICON
-        elif is_in_game():
+        elif any(_cached_img(path) for path in MAIN_ICONS):
+            state = STATE_IN_GAME
+        # 在最后的游戏内判断里加上：
+        elif any(_cached_img(path) for path in MAIN_ICONS) or _cached_img(POWER_BTN):
             state = STATE_IN_GAME
         else:
             state = STATE_UNKNOWN
@@ -339,7 +447,7 @@ def is_in_game() -> bool:
     """游戏内：主界面图标命中（手机 / 组队 / 头像等）。
 
     不依赖左下角 UID：全屏 + 悬浮窗遮挡时 UID 常常读不到，卡死风险大于收益。
-    识别不到时由调用方在 10 秒后按 ESC 回退，直到呼出主界面。
+    识别不到时由调用方等待（UNKNOWN_GRACE 秒宽限），绝不按 ESC 打扰加载/更新。
     """
     if not is_game_running():
         return False
@@ -511,7 +619,7 @@ def _click_power_to_login(timeout: float = 150) -> bool:
 def logout_to_login_page(timeout: float = GLOBAL_TIMEOUT) -> bool:
     """把当前账号退到登录界面（游戏内 / 标题界面 / 各种登录界面都支持）。
 
-    UNKNOWN（加载中/黑屏）时只等不按：每 2 秒看一次，连续 30 秒识别不到界面才按一次 ESC。
+    UNKNOWN（加载中/黑屏/更新/编译着色器）时只等不按：不按 ESC，避免打断更新。
     """
     deadline = time.time() + timeout
     last_state: str | None = None
@@ -521,14 +629,18 @@ def logout_to_login_page(timeout: float = GLOBAL_TIMEOUT) -> bool:
         if state in LOGIN_STATES:
             log.info(f"[多账号] 已处于登录界面（{STATE_LABELS[state]}）")
             return True
+        if state in (STATE_UPDATING, STATE_COMPILING):
+            # 更新/编译着色器期间不按任何键，只等进度走完
+            log.debug(f"[多账号] 游戏正在{STATE_LABELS.get(state, state)}，等待中")
+            time.sleep(5)
+            continue
         if state == STATE_UNKNOWN:
             waited = time.time() - unknown_since
-            if waited < 10:
+            if waited < UNKNOWN_GRACE:
                 log.debug("[多账号] 界面加载中，等待…")
                 time.sleep(1)
                 continue
-            log.info("[多账号] 10 秒未识别到游戏界面，按一次 ESC 尝试回退")
-            _press("esc")
+            log.info(f"[多账号] {UNKNOWN_GRACE} 秒未识别到游戏界面，继续等待（不按 ESC）")
             unknown_since = time.time()
             time.sleep(2)
             continue
@@ -614,11 +726,29 @@ def _submit_login() -> bool:
 
 
 def _wait_login_result(timeout: float = 120) -> bool:
-    """并发等待：欢迎界面 / 开始游戏 / 点击进入 / 月卡弹窗；期间检测账号密码错误。"""
+    """并发等待：欢迎界面 / 开始游戏 / 点击进入 / 月卡弹窗；期间处理密码错误与安全风险弹窗。"""
     deadline = time.time() + timeout
+    risk_notified = False
     while time.time() < deadline:
         if _find_img(PASSWORD_ERROR) or _find_text("账号或密码错误", include=True, crop=(0.25, 0.05, 0.75, 0.35)):
             raise PasswordError("游戏提示账号或密码错误")
+        # [MULTI_ACCOUNT] 风险弹窗：登录后立刻被风控拦下，必须点【确定】交给外层进入人工验证
+        if (
+            _find_text("账号存在安全风险", include=True)
+            or _find_text("安全风险", include=True)
+            or _find_text("验证身份", include=True)
+        ):
+            if not risk_notified:
+                risk_notified = True
+                log.warning("[多账号] 等待登录结果时检测到「账号存在安全风险」弹窗，点击【确定】")
+                log.warning("[多账号] 接下来会弹出短信验证网页：请在游戏窗口内手动完成验证（最长等待 5 分钟）")
+            _click_text("确定", include=True, crop=REGION_DIALOG) or _click_img(POP_CONFIRM_BTN)
+            time.sleep(3)
+            deadline = time.time() + 300  # 给足 5 分钟
+            continue  # 留在本函数里继续等网页加载或验证完成
+        if _find_text("安全验证", include=True) or _find_text("获取验证码", include=True):
+            # 已经在验证网页上：跳出局部等待，交给主循环进入 STATE_MANUAL_VERIFY
+            return False
         if _find_img(WELCOME) or _find_img(START_GAME_BTN) or _find_img(CLICK_ENTER_BTN):
             return True
         if _find_img(TRAIN_SUPPLY):
@@ -650,8 +780,7 @@ def ensure_login_form(timeout: float = GLOBAL_TIMEOUT) -> bool:
                 log.debug("[多账号] 界面加载中，等待…")
                 time.sleep(2)
                 continue
-            log.info(f"[多账号] {UNKNOWN_GRACE} 秒未识别到登录相关界面，按一次 ESC 尝试回退")
-            _press("esc")
+            log.info(f"[多账号] {UNKNOWN_GRACE} 秒未识别到登录相关界面，继续等待（不按 ESC）")
             unknown_since = time.time()
             time.sleep(STEP_INTERVAL)
             continue
@@ -714,7 +843,7 @@ def login_account(username: str, password: str) -> bool:
     return ok
 
 
-def enter_game(timeout: float = 60) -> bool:
+def enter_game(timeout: float = 300) -> bool:
     """标题界面「开始游戏」→「点击进入」→ 游戏内。"""
     if _find_img(START_GAME_BTN) or _find_text("开始游戏", include=True, crop=REGION_TITLE_BOTTOM):
         log.info("[多账号] 点击【开始游戏】")
@@ -724,10 +853,19 @@ def enter_game(timeout: float = 60) -> bool:
     deadline = time.time() + timeout
     enter_clicked = False
     last_enter_click = 0.0
+    loading_notified_at = 0.0
     while time.time() < deadline:
         if is_in_game():
             log.info("[多账号] 已进入游戏")
             return True
+        # TODO [MULTI_ACCOUNT] 下载/编译着色器期间只等待，不点「点击进入」也不按键
+        state = detect_state()
+        if state in (STATE_UPDATING, STATE_COMPILING):
+            if time.time() - loading_notified_at > 30:
+                loading_notified_at = time.time()
+                log.info(f"[多账号] 游戏正在{STATE_LABELS.get(state, state)}，等待加载完成…")
+            time.sleep(5)
+            continue
         if (not enter_clicked or time.time() - last_enter_click > 8) and (
             _find_img(CLICK_ENTER_BTN) or _find_text("点击进入", include=True, crop=REGION_TITLE_BOTTOM)
         ):
@@ -784,6 +922,9 @@ def _prepare_account_body(account: dict, timeout: float = 120.0) -> bool:
     deadline = time.time() + timeout
     unknown_since = time.time()
     last_state: str | None = None
+    # TODO [MULTI_ACCOUNT] 人工验证只提示一次；更新/编译进度提示 60 秒一次
+    manual_verify_notified = False
+    updating_notified_at = 0.0
     while time.time() < deadline:
         state = detect_state()
         if state != STATE_UNKNOWN:
@@ -820,7 +961,9 @@ def _prepare_account_body(account: dict, timeout: float = 120.0) -> bool:
                 continue
             log.info(f"[多账号] 开始为账号「{name}」输入账号密码")
             if not login_account(username, password):
-                raise SwitchError("登录流程失败")
+                log.warning("[多账号] 登录流程未直接完成（可能是风控拦截或需要验证码），交回主循环重新识别状态")
+                time.sleep(3)
+                continue  # 不要 raise，让大循环去处理验证码状态
             need_relogin = False
             if enter_game():
                 return True
@@ -832,15 +975,69 @@ def _prepare_account_body(account: dict, timeout: float = 120.0) -> bool:
             time.sleep(1)
             continue
 
-        # UNKNOWN：加载中只等待，连续 UNKNOWN_GRACE 秒识别不到界面才按一次 ESC
+        # TODO [MULTI_ACCOUNT] 人工验证 / 更新 / 编译着色器：绝不按键、绝不点鼠标，只等待
+        if state == STATE_RISK_POPUP:
+            _note_risk_popup()
+            log.warning("=" * 70)
+            log.warning("[多账号] 检测到「账号存在安全风险」弹窗：这是游戏风控要求验证身份")
+            log.warning("[多账号] 正在点击黄色【确定】按钮，随后会跳转到短信验证网页")
+            log.warning("[多账号] 请在游戏窗口内手动完成短信验证，程序最长等待 5 分钟（不会擅自点击）")
+            log.warning("=" * 70)
+            if not _click_text("确定", include=True, crop=REGION_DIALOG):
+                _click_img(POP_CONFIRM_BTN)
+            time.sleep(2)
+            continue
+
+        if state == STATE_MANUAL_VERIFY:
+            if not manual_verify_notified:
+                manual_verify_notified = True
+                log.warning("=" * 70)
+                log.warning("[多账号] 检测到安全验证：请在游戏窗口内手动完成短信验证！")
+                log.warning("[多账号] 验证网页会挡住游戏画面（左下角日志悬浮窗可能也看不到）")
+                log.warning("[多账号] 程序已暂停自动化等待，验证完成后会自动继续（最长等待 5 分钟）")
+                log.warning("=" * 70)
+            deadline = time.time() + 300
+            # 用户要求：人工验证期间给足时间（重置总超时，每 5 秒看一次）
+            deadline = time.time() + 300
+            time.sleep(5)
+            continue
+
+        if state in (STATE_UPDATING, STATE_COMPILING):
+            if not updating_notified_at or time.time() - updating_notified_at > 60:
+                updating_notified_at = time.time()
+                label = STATE_LABELS.get(state, state)
+                log.info(f"[多账号] 游戏正在{label}（进度界面），保持等待，不会按 ESC 也不会点击")
+            deadline = max(deadline, time.time() + 60)
+            time.sleep(5)
+            continue
+
+        if state == STATE_RESOURCE_DIALOG:
+            log.info("[多账号] 检测到「任务资源管理」下载提示，点击【下载】")
+            if not (_click_text("下载", include=True, crop=REGION_DIALOG) or _click_text("下载", include=True)):
+                log.warning("[多账号] 未点到【下载】按钮，稍后重试")
+            else:
+                time.sleep(2)
+                # 二次确认：当前网络没有使用 wifi，是否下载资源
+                if _find_text("下载资源", include=True) or _find_text("没有使用wifi", include=True):
+                    log.info("[多账号] 点击下载二次确认【确认】")
+                    _click_text("确认", include=True, crop=REGION_CONFIRM)
+            time.sleep(2)
+            continue
+
+        # UNKNOWN：加载中只等待，不按任何按键（避免打断更新/着色器编译）
         if time.time() - unknown_since < UNKNOWN_GRACE:
             log.debug("[多账号] 界面加载中，等待…")
             time.sleep(1)
             continue
-        log.info(f"[多账号] {UNKNOWN_GRACE} 秒未识别到游戏界面，按一次 ESC 尝试回退")
-        _press("esc")
-        unknown_since = time.time()
-        time.sleep(2)
+
+        # 【新增】如果是网页被关掉退回了账号密码界面，OCR 强制识别并重新登录
+        if _find_text("输入手机号/邮箱", include=True) or _find_text("进入游戏", include=True):
+            log.warning("[多账号] 检测到已退回账号密码界面（可能是关闭了验证网页），准备重新尝试登录")
+            state = STATE_PASSWORD_FORM  # 伪造状态，让它重新走登录流程
+        else:
+            log.info(f"[多账号] {UNKNOWN_GRACE} 秒未识别到游戏界面，继续等待（不按 ESC）")
+            unknown_since = time.time()
+            time.sleep(2)
 
     raise SwitchError("等待切号超时")
 
